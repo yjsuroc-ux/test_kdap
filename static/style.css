@@ -115,6 +115,11 @@ textarea { width: 100%; min-height: 70px; resize: vertical; }
 .ttype.해당없음, .ttype.none { background: var(--gray); }
 .empty { color: var(--muted); padding: 14px; text-align: center; border: 1px dashed var(--line); border-radius: 8px; background: #fff; }
 
+.section-title.done-title { margin-top: 22px; color: var(--green); }
+.sub-title { font-size: 12px; font-weight: 700; color: var(--green); margin: 10px 0 4px; }
+.item .meta b { font-weight: 600; color: var(--green); }
+.item.done .meta b { color: var(--green); }
+.more-done { margin: 2px 0 8px; }
 .staff-group { margin-bottom: 18px; }
 .staff-group > .gh { display: flex; gap: 10px; align-items: baseline; border-bottom: 2px solid var(--line); padding-bottom: 4px; margin-bottom: 8px; }
 .staff-group > .gh b { font-size: 15px; }

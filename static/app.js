@@ -187,9 +187,16 @@ function itemHtml(it, showOwner) {
     <span class="ttype ${esc(t.type)}">${esc(t.type)}</span>
     <span class="ititle" title="${esc(it.kind === 'step' ? it.title + ' — ' + t.title : it.title)}">${title}</span>
     ${showOwner ? `<span class="owner">${esc(t.assignee_name)}</span>` : ''}
-    ${it.kind === 'task' && (t.produced_date || t.received_date) ? `<span class="meta">${t.produced_date ? `생산 ${fmtDate(t.produced_date)}` : ''}${t.produced_date && t.received_date ? ' · ' : ''}${t.received_date ? `접수 ${fmtDate(t.received_date)}` : ''}</span>` : ''}
+    ${it.kind === 'task' ? metaHtml(t) : ''}
     <span class="idate">${it.date ? fmtDate(it.date) : ''}</span>
   </a>`;
+}
+function metaHtml(t) {
+  const parts = [];
+  if (t.produced_date) parts.push(`생산 ${fmtDate(t.produced_date)}`);
+  if (t.received_date) parts.push(`접수 ${fmtDate(t.received_date)}`);
+  if (t.status === '완료' && t.completed_at) parts.push(`<b>완료 ${fmtDate(t.completed_at.slice(0, 10))}</b>`);
+  return parts.length ? `<span class="meta">${parts.join(' · ')}</span>` : '';
 }
 function chipHtml(it, showOwner) {
   const t = it.task;
@@ -249,7 +256,10 @@ async function renderList() {
   const tasks = visibleTasks();
   const items = buildItems(tasks);
   const body = $('#listBody');
-  if (v.period === 'today') body.innerHTML = dept ? todayDept(tasks) : todaySections(tasks);
+  if (v.period === 'today') {
+    body.innerHTML = dept ? todayDept(tasks) : todaySections(tasks);
+    $$('.more-done', body).forEach(b => b.onclick = () => { v.showAllDone = true; renderList(); });
+  }
   else if (v.period === 'week') body.innerHTML = dept && !v.filter ? weekDept(items) : weekGrid(items, dept);
   else body.innerHTML = monthGrid(items, dept);
 }
@@ -265,9 +275,13 @@ function bucketOf(it) {
   return d <= 3 ? 'soon' : null;
 }
 function todayBuckets(tasks) {
-  const b = { overdue: [], today: [], soon: [], nodate: [] };
+  const b = { overdue: [], today: [], soon: [], nodate: [], done: [] };
   for (const t of tasks) {
     const its = buildItems([t]);
+    if (t.status === '완료') {  // 완료한 업무는 기한과 관계없이 '완료' 칸에 모은다
+      b.done.push({ task: t, item: its[0], key: 'done', open: false, sortDate: t.completed_at || '' });
+      continue;
+    }
     // 완료한 단계는 칸을 정하는 데 쓰지 않는다(업무 아래 회색으로만 보임).
     const hits = its.filter(it => bucketOf(it) && !(it.kind === 'step' && it.done));
     if (!hits.length) continue;
@@ -275,8 +289,19 @@ function todayBuckets(tasks) {
     const keyDates = hits.filter(it => bucketOf(it) === key && it.date).map(it => it.date).sort();
     b[key].push({ task: t, item: its[0], key, open: hits.some(it => !it.done), sortDate: keyDates[0] || '9999' });
   }
-  Object.values(b).forEach(a => a.sort((x, y) => x.sortDate.localeCompare(y.sortDate) || x.task.title.localeCompare(y.task.title, 'ko')));
+  BUCKETS.forEach(k => b[k].sort((x, y) => x.sortDate.localeCompare(y.sortDate) || x.task.title.localeCompare(y.task.title, 'ko')));
+  b.done.sort((x, y) => y.sortDate.localeCompare(x.sortDate));  // 최근 완료 순
   return b;
+}
+// 완료 칸: 최근 30일 안에 완료한 업무를 보여 주고, 그 이전 것은 [더 보기]로 펼친다.
+const DONE_RECENT_DAYS = 30;
+function doneListHtml(arr) {
+  if (!arr.length) return '';
+  const cutoff = addDays(today(), -DONE_RECENT_DAYS);
+  const recent = state.view.showAllDone ? arr : arr.filter(e => (e.sortDate || '').slice(0, 10) >= cutoff);
+  const hidden = arr.length - recent.length;
+  return recent.map(e => taskBlockHtml(e, false)).join('') +
+    (hidden ? `<button class="btn sm more-done">이전 완료 업무 ${hidden}건 더 보기</button>` : '');
 }
 function stepNotesHtml(t) {
   if (!t.steps.length) return '';
@@ -297,7 +322,8 @@ function todaySections(tasks) {
     ${arr.length ? arr.map(e => taskBlockHtml(e, false)).join('') : (emptyMsg ? `<div class="empty">${emptyMsg}</div>` : '')}`;
   return sec('기한 지남 (미완료)', b.overdue, '') + sec('오늘 마감', b.today, '오늘 마감인 항목이 없습니다.') +
     sec('3일 이내 마감', b.soon, '') + (b.nodate.length ? sec('기한 미정', b.nodate, '') : '') +
-    (!b.overdue.length && !b.today.length && !b.soon.length && !b.nodate.length ? '<p class="muted small">주간·월간 보기에서 이후 일정을 확인할 수 있습니다.</p>' : '');
+    (!b.overdue.length && !b.today.length && !b.soon.length && !b.nodate.length ? '<p class="muted small">주간·월간 보기에서 이후 일정을 확인할 수 있습니다.</p>' : '') +
+    (b.done.length ? `<div class="section-title done-title">완료 <span class="count">${b.done.length}건 · 최근 완료 순</span></div>${doneListHtml(b.done)}` : '');
 }
 function groupByStaff(items) {
   const m = new Map();
@@ -316,7 +342,7 @@ function todayDept(tasks) {
   }
   const groups = [...byStaff.values()].sort((a, b) => a.name.localeCompare(b.name, 'ko'))
     .map(g => ({ ...g, b: todayBuckets(g.tasks) }))
-    .filter(g => BUCKETS.some(k => g.b[k].length));
+    .filter(g => BUCKETS.some(k => g.b[k].length) || g.b.done.length);
   if (!groups.length) return '<div class="empty">오늘 볼 항목이 없습니다.</div>';
   const open = arr => arr.filter(e => e.open).length;
   return groups.map(g => {
@@ -325,8 +351,10 @@ function todayDept(tasks) {
       ${g.b.overdue.length ? `<span class="pill red">지남 ${g.b.overdue.length}</span>` : ''}
       ${open(g.b.today) ? `<span class="pill orange">오늘 ${open(g.b.today)}</span>` : ''}
       ${open(g.b.soon) ? `<span class="pill orange">3일 이내 ${open(g.b.soon)}</span>` : ''}
-      ${g.b.nodate.length ? `<span class="pill gray">기한 미정 ${g.b.nodate.length}</span>` : ''}</div>
-      ${all.map(e => taskBlockHtml(e, false)).join('')}</div>`;
+      ${g.b.nodate.length ? `<span class="pill gray">기한 미정 ${g.b.nodate.length}</span>` : ''}
+      ${g.b.done.length ? `<span class="pill green">완료 ${g.b.done.length}</span>` : ''}</div>
+      ${all.map(e => taskBlockHtml(e, false)).join('')}
+      ${g.b.done.length ? `<div class="sub-title">완료</div>${doneListHtml(g.b.done)}` : ''}</div>`;
   }).join('');
 }
 function weekDays() { const mo = mondayOf(state.view.anchor); return [...Array(7)].map((_, i) => addDays(mo, i)); }
