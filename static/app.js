@@ -246,31 +246,54 @@ async function renderList() {
   if ($('#prevBtn')) { $('#prevBtn').onclick = () => shift(-1); $('#nextBtn').onclick = () => shift(1); $('#todayBtn').onclick = () => { v.anchor = today(); renderList(); }; }
   $('#newTaskBtn').onclick = newTaskModal;
 
-  const items = buildItems(visibleTasks());
+  const tasks = visibleTasks();
+  const items = buildItems(tasks);
   const body = $('#listBody');
-  if (v.period === 'today') body.innerHTML = dept ? todayDept(items) : todaySections(items, false);
+  if (v.period === 'today') body.innerHTML = dept ? todayDept(tasks) : todaySections(tasks);
   else if (v.period === 'week') body.innerHTML = dept && !v.filter ? weekDept(items) : weekGrid(items, dept);
   else body.innerHTML = monthGrid(items, dept);
 }
 
-function todayBuckets(items) {
-  const t = today();
+// "오늘" 보기는 업무 단위로 보여 준다. 업무 자체 기한과 단계 기한 중 가장 급한 것으로 칸을 정하고,
+// 단계는 업무 아래에 댓글처럼 기한·단계명만 붙인다.
+const BUCKETS = ['overdue', 'today', 'soon', 'nodate'];
+function bucketOf(it) {
+  if (!it.date) return it.kind === 'task' && !it.done ? 'nodate' : null;
+  const d = diffDays(it.date, today());
+  if (d < 0) return it.done ? null : 'overdue';
+  if (d === 0) return 'today';
+  return d <= 3 ? 'soon' : null;
+}
+function todayBuckets(tasks) {
   const b = { overdue: [], today: [], soon: [], nodate: [] };
-  for (const it of items) {
-    if (!it.date) { if (it.kind === 'task' && !it.done) b.nodate.push(it); continue; }
-    const d = diffDays(it.date, t);
-    if (d < 0) { if (!it.done) b.overdue.push(it); }
-    else if (d === 0) b.today.push(it);
-    else if (d <= 3) b.soon.push(it);
+  for (const t of tasks) {
+    const its = buildItems([t]);
+    // 완료한 단계는 칸을 정하는 데 쓰지 않는다(업무 아래 회색으로만 보임).
+    const hits = its.filter(it => bucketOf(it) && !(it.kind === 'step' && it.done));
+    if (!hits.length) continue;
+    const key = BUCKETS.find(k => hits.some(it => bucketOf(it) === k));
+    const keyDates = hits.filter(it => bucketOf(it) === key && it.date).map(it => it.date).sort();
+    b[key].push({ task: t, item: its[0], key, open: hits.some(it => !it.done), sortDate: keyDates[0] || '9999' });
   }
-  Object.values(b).forEach(a => a.sort(byDate));
+  Object.values(b).forEach(a => a.sort((x, y) => x.sortDate.localeCompare(y.sortDate) || x.task.title.localeCompare(y.task.title, 'ko')));
   return b;
 }
-function todaySections(items, showOwner) {
-  const b = todayBuckets(items);
+function stepNotesHtml(t) {
+  if (!t.steps.length) return '';
+  const tdone = t.status === '완료';
+  return `<div class="step-notes">${t.steps.map(s => {
+    const it = { kind: 'step', date: s.deadline, done: tdone || s.done };
+    return `<a class="step-note ${statusOf(it)}" href="#/task/${t.id}"><span class="sn-date">${s.deadline ? fmtDate(s.deadline) : '기한 미정'}</span><span class="sn-name">${esc(s.name)}</span></a>`;
+  }).join('')}</div>`;
+}
+function taskBlockHtml(entry, showOwner) {
+  return `<div class="task-block">${itemHtml(entry.item, showOwner)}${stepNotesHtml(entry.task)}</div>`;
+}
+function todaySections(tasks) {
+  const b = todayBuckets(tasks);
   const sec = (title, arr, emptyMsg) => `
     <div class="section-title">${title} <span class="count">${arr.length}건</span></div>
-    ${arr.length ? arr.map(it => itemHtml(it, showOwner)).join('') : (emptyMsg ? `<div class="empty">${emptyMsg}</div>` : '')}`;
+    ${arr.length ? arr.map(e => taskBlockHtml(e, false)).join('') : (emptyMsg ? `<div class="empty">${emptyMsg}</div>` : '')}`;
   return sec('기한 지남 (미완료)', b.overdue, '') + sec('오늘 마감', b.today, '오늘 마감인 항목이 없습니다.') +
     sec('3일 이내 마감', b.soon, '') + (b.nodate.length ? sec('기한 미정', b.nodate, '') : '') +
     (!b.overdue.length && !b.today.length && !b.soon.length && !b.nodate.length ? '<p class="muted small">주간·월간 보기에서 이후 일정을 확인할 수 있습니다.</p>' : '');
@@ -284,19 +307,25 @@ function groupByStaff(items) {
   }
   return [...m.values()].sort((a, b) => a.name.localeCompare(b.name, 'ko'));
 }
-function todayDept(items) {
-  const groups = groupByStaff(items).map(g => ({ ...g, b: todayBuckets(g.items) }))
-    .filter(g => g.b.overdue.length + g.b.today.length + g.b.soon.length + g.b.nodate.length);
+function todayDept(tasks) {
+  const byStaff = new Map();
+  for (const t of tasks) {
+    if (!byStaff.has(t.assignee_id)) byStaff.set(t.assignee_id, { name: t.assignee_name, tasks: [] });
+    byStaff.get(t.assignee_id).tasks.push(t);
+  }
+  const groups = [...byStaff.values()].sort((a, b) => a.name.localeCompare(b.name, 'ko'))
+    .map(g => ({ ...g, b: todayBuckets(g.tasks) }))
+    .filter(g => BUCKETS.some(k => g.b[k].length));
   if (!groups.length) return '<div class="empty">오늘 볼 항목이 없습니다.</div>';
-  const open = arr => arr.filter(it => !it.done).length;
+  const open = arr => arr.filter(e => e.open).length;
   return groups.map(g => {
-    const all = [...g.b.overdue, ...g.b.today, ...g.b.soon, ...g.b.nodate];
+    const all = BUCKETS.flatMap(k => g.b[k]);
     return `<div class="staff-group"><div class="gh"><b>${esc(g.name)}</b>
       ${g.b.overdue.length ? `<span class="pill red">지남 ${g.b.overdue.length}</span>` : ''}
       ${open(g.b.today) ? `<span class="pill orange">오늘 ${open(g.b.today)}</span>` : ''}
       ${open(g.b.soon) ? `<span class="pill orange">3일 이내 ${open(g.b.soon)}</span>` : ''}
       ${g.b.nodate.length ? `<span class="pill gray">기한 미정 ${g.b.nodate.length}</span>` : ''}</div>
-      ${all.map(it => itemHtml(it, false)).join('')}</div>`;
+      ${all.map(e => taskBlockHtml(e, false)).join('')}</div>`;
   }).join('');
 }
 function weekDays() { const mo = mondayOf(state.view.anchor); return [...Array(7)].map((_, i) => addDays(mo, i)); }
