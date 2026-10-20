@@ -331,11 +331,11 @@ def task_update(tid):
         sets.append(f"{col}=?")
         vals.append(val)
 
-    if "title" in b:
-        title = (b["title"] or "").strip()
-        if not title:
-            raise ApiError("제목을 입력해 주세요.")
-        put("title", title)
+    # 제목·문서번호·생산일자는 접수문서 원래 정보라 고칠 수 없다(같은 값을 보내는 것은 허용).
+    locked = {"title": "제목은", "doc_no": "문서번호는", "produced_date": "생산일자는"}
+    for field, label in locked.items():
+        if field in b and ((b[field] or "").strip() or None) != (cur.get(field) or None):
+            raise ApiError(f"{label} 수정할 수 없습니다.")
     if "type" in b and b["type"] != cur["type"]:
         if b["type"] not in TYPES:
             raise ApiError("유형은 회신 또는 전파입니다.")
@@ -352,15 +352,6 @@ def task_update(tid):
         put("sender", (b["sender"] or "").strip() or None)
     if "received_date" in b:
         put("received_date", valid_date(b["received_date"], "접수일"))
-    if "produced_date" in b:
-        put("produced_date", valid_date(b["produced_date"], "생산일자"))
-    if "doc_no" in b:
-        doc_no = (b["doc_no"] or "").strip() or None
-        norm = rules.normalize_docno(doc_no) or None
-        if not cur.get("receipt_no") and docno_taken(norm, tid):
-            raise ApiError(f"문서번호 {doc_no}는 이미 다른 업무에 등록되어 있습니다.")
-        put("doc_no", doc_no)
-        put("doc_no_norm", norm)
     if "assignee_id" in b and int(b["assignee_id"]) != cur["assignee_id"]:
         new = conn().execute("SELECT * FROM staff WHERE id=?", (int(b["assignee_id"]),)).fetchone()
         if not new:

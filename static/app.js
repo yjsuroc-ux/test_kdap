@@ -492,12 +492,12 @@ function drawDetail(t) {
         <div class="panel">
           <h3>업무 정보</h3>
           <div class="form-grid">
-            <label>제목</label><input type="text" id="f_title" value="${esc(t.title)}" ${dis}>
+            <label>제목</label><div class="ro-field">${esc(t.title)}</div>
             <label>유형</label><div class="row"><select id="f_type" ${dis}>${TYPES.map(x => `<option ${x === t.type ? 'selected' : ''}>${x}</option>`).join('')}</select>${srcBadge(t.type_source, ev.type_basis)}</div>
             <label>최종 기한</label><div class="row"><input type="date" id="f_deadline" value="${esc(t.deadline || '')}" ${dis}>${srcBadge(t.deadline_source)}${t.deadline ? `<span class="muted small">${fmtFull(t.deadline)}</span>` : '<span class="badge-check">기한 미정</span>'}</div>
             <label>담당자</label><div class="row"><select id="f_assignee" ${dis}>${staffOptions(t.assignee_id, t.assignee_id)}</select>${mine ? '<span class="muted small">다른 담당자로 넘길 수 있습니다</span>' : ''}</div>
-            <label>문서번호</label><input type="text" id="f_docno" value="${esc(t.doc_no || '')}" ${dis}>
-            <label>생산일자</label><div class="row"><input type="date" id="f_produced" value="${esc(t.produced_date || '')}" ${dis}><span class="muted small">발신부서가 문서를 생산한 날</span></div>
+            <label>문서번호</label><div class="ro-field">${esc(t.doc_no || '-')}</div>
+            <label>생산일자</label><div class="ro-field">${t.produced_date ? fmtFull(t.produced_date) : '-'} <span class="muted small">발신부서가 문서를 생산한 날</span></div>
             <label>메모</label><textarea id="f_memo" ${dis}>${esc(t.memo || '')}</textarea>
           </div>
           ${mine ? `<div class="row" style="margin-top:12px"><button class="btn primary" id="saveBtn">저장</button><span class="spacer"></span><button class="btn danger sm" id="deleteBtn">업무 삭제</button></div>` : ''}
@@ -545,8 +545,8 @@ function drawDetail(t) {
     const newAssignee = Number($('#f_assignee').value);
     if (newAssignee !== t.assignee_id && !confirm(`담당자를 ${staffName(newAssignee)} 님으로 넘깁니다. 넘긴 뒤에는 이 업무를 수정할 수 없습니다. 계속할까요?`)) return;
     const nt = await api('PUT', `/api/tasks/${t.id}`, {
-      title: $('#f_title').value, type: $('#f_type').value, deadline: $('#f_deadline').value,
-      assignee_id: newAssignee, doc_no: $('#f_docno').value, produced_date: $('#f_produced').value, memo: $('#f_memo').value,
+      type: $('#f_type').value, deadline: $('#f_deadline').value,
+      assignee_id: newAssignee, memo: $('#f_memo').value,
     });
     toast('저장했습니다.'); refresh(nt);
   });
