@@ -155,19 +155,6 @@ def staff_list():
     return jsonify([dict(r) for r in rows])
 
 
-def get_or_create_staff(name):
-    name = (name or "").strip()
-    if not name:
-        return None
-    c = conn()
-    row = c.execute("SELECT * FROM staff WHERE name=?", (name,)).fetchone()
-    if row:
-        if not row["active"]:
-            c.execute("UPDATE staff SET active=1 WHERE id=?", (row["id"],))
-        return row["id"]
-    return c.execute("INSERT INTO staff(name) VALUES (?)", (name,)).lastrowid
-
-
 @app.post("/api/staff")
 def staff_create():
     name = (body().get("name") or "").strip()
@@ -342,18 +329,31 @@ def docno_taken(norm, exclude_id=None):
     return row is not None
 
 
-def already_registered(rkey, dkey):
-    """가져오기 중복 검사. 접수번호가 있으면 접수번호로 판단한다(문서번호는 기관이 달라도 겹칠 수 있음).
+class RegisteredKeys:
+    """가져오기 중복 검사. 등록된 접수번호·문서번호를 한 번에 읽어 두고 판단한다
+    (클라우드 DB는 조회 1번에 0.2~0.3초씩 걸려, 행마다 조회하면 100건에 수십 초가 걸린다).
+    접수번호가 있으면 접수번호로 판단하고(문서번호는 기관이 달라도 겹칠 수 있음),
     접수번호가 없는 쪽이 있으면 문서번호로 판단한다."""
-    c = conn()
-    if rkey and c.execute("SELECT 1 FROM task WHERE receipt_no_norm=?", (rkey,)).fetchone():
-        return True
-    if dkey:
-        q = "SELECT 1 FROM task WHERE doc_no_norm=?"
+
+    def __init__(self):
+        self.receipts, self.docs, self.docs_no_receipt = set(), set(), set()
+        for r in conn().execute("SELECT receipt_no_norm, doc_no_norm FROM task"):
+            self.add(r[0], r[1])
+
+    def add(self, rkey, dkey):
         if rkey:
-            q += " AND (receipt_no_norm IS NULL OR receipt_no_norm='')"
-        return c.execute(q, (dkey,)).fetchone() is not None
-    return False
+            self.receipts.add(rkey)
+        if dkey:
+            self.docs.add(dkey)
+            if not rkey:
+                self.docs_no_receipt.add(dkey)
+
+    def has(self, rkey, dkey):
+        if rkey and rkey in self.receipts:
+            return True
+        if dkey:
+            return dkey in (self.docs_no_receipt if rkey else self.docs)
+        return False
 
 
 @app.post("/api/tasks")
@@ -820,6 +820,7 @@ def import_preview(iid):
     conn().commit()
 
     cfg = rules.load_config()
+    registered = RegisteredKeys()
     rows, dup_rows, dup_keys, seen = [], [], set(), set()
     for i in range(len(imp["rows"])):
         f = _row_fields(imp, i)
@@ -827,7 +828,7 @@ def import_preview(iid):
             continue
         rkey, dkey = rules.normalize_docno(f["receipt_no"]), rules.normalize_docno(f["doc_no"])
         key = f"r:{rkey}" if rkey else (f"d:{dkey}" if dkey else None)
-        if already_registered(rkey, dkey) or (key and key in seen):
+        if registered.has(rkey, dkey) or (key and key in seen):
             dup_rows.append(f["receipt_no"] or f["doc_no"])
             dup_keys.update(k for k in (rkey, dkey) if k)
             continue
@@ -886,7 +887,25 @@ def import_commit(iid):
     items = body().get("items") or []
     c = conn()
     cfg = rules.load_config()
-    created, skipped, errors = 0, [], []
+    registered = RegisteredKeys()  # 중복 검사용 번호: 한 번에 읽기
+    staff = {s["name"]: s for s in c.execute("SELECT id, name, active FROM staff")}  # 담당자: 한 번에 읽기
+    reactivated = set()
+
+    def staff_id(name):
+        name = (name or "").strip()
+        if not name:
+            return me["id"]
+        s = staff.get(name)
+        if s is None:  # 명단에 없는 이름은 추가(새 이름만 DB에 따로 쓴다)
+            sid = c.execute("INSERT INTO staff(name) VALUES (?)", (name,)).lastrowid
+            staff[name] = {"id": sid, "name": name, "active": 1}
+            return sid
+        if not s["active"] and name not in reactivated:
+            c.execute("UPDATE staff SET active=1 WHERE id=?", (s["id"],))
+            reactivated.add(name)
+        return s["id"]
+
+    new_rows, skipped, errors = [], [], []
     ts = db.now()
     for it in items:
         r = rows.get(int(it.get("idx", -1)))
@@ -902,30 +921,33 @@ def import_commit(iid):
         except ApiError as e:
             errors.append(f"{label}: {e.msg}")
             continue
-        if already_registered(r["rkey"], r["dkey"]):
+        if registered.has(r["rkey"], r["dkey"]):
             skipped.append(label)
             continue
-        assignee_id = get_or_create_staff(it.get("assignee") or r["assignee"]) or me["id"]
+        registered.add(r["rkey"], r["dkey"])  # 같은 요청 안의 중복도 막는다
         f = imp["files"][r["file_index"]] if r["file_index"] is not None else None
         ident = _identify_row(r, f, cfg)
-        c.execute(
+        new_rows.append((
+            r["doc_no"] or None, r["dkey"] or None, r["receipt_no"] or None, r["rkey"] or None,
+            r["title"] or "(제목 없음)", r["sender"] or None, _produced_of(r, f)[0], r["received"],
+            staff_id(it.get("assignee") or r["assignee"]), typ, deadline,
+            "auto" if it.get("type_source") == "auto" else "manual",
+            "auto" if it.get("deadline_source") == "auto" else "manual",
+            json.dumps(dict(ident["evidence"], file=f["name"] if f else None,
+                            type_basis=ident.get("type_basis")), ensure_ascii=False),
+            (it.get("memo") or "").strip() or None,
+            f["text"] if f else None, ts, ts, me["name"],
+        ))
+    if new_rows:  # 한꺼번에 넣는다(클라우드 DB 왕복 횟수 최소화)
+        c.executemany(
             """INSERT INTO task(source, doc_no, doc_no_norm, receipt_no, receipt_no_norm, title, sender,
                produced_date, received_date, assignee_id, type, deadline, type_source, deadline_source,
                evidence, memo, body_text, created_at, updated_at, updated_by)
                VALUES ('가져오기',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (r["doc_no"] or None, r["dkey"] or None, r["receipt_no"] or None, r["rkey"] or None,
-             r["title"] or "(제목 없음)", r["sender"] or None, _produced_of(r, f)[0], r["received"],
-             assignee_id, typ, deadline,
-             "auto" if it.get("type_source") == "auto" else "manual",
-             "auto" if it.get("deadline_source") == "auto" else "manual",
-             json.dumps(dict(ident["evidence"], file=f["name"] if f else None,
-                             type_basis=ident.get("type_basis")), ensure_ascii=False),
-             (it.get("memo") or "").strip() or None,
-             f["text"] if f else None, ts, ts, me["name"]),
+            new_rows,
         )
-        created += 1
     c.commit()
-    return jsonify(created=created, skipped=len(skipped), skipped_list=skipped, errors=errors)
+    return jsonify(created=len(new_rows), skipped=len(skipped), skipped_list=skipped, errors=errors)
 
 
 # ================================================================ 화면

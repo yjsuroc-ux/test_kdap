@@ -10,6 +10,8 @@ import datetime as dt
 import os
 import re
 import sqlite3
+import threading
+import time
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 
@@ -212,6 +214,11 @@ class _PgConn:
         # prepare_threshold=None: 서버 측 prepared statement를 쓰지 않는다.
         # Supabase 트랜잭션 풀러(6543)·PgBouncer는 이를 지원하지 않아, 같은 쿼리를 여러 번 돌리면 오류가 난다.
         self._c = psycopg.connect(url, connect_timeout=10, prepare_threshold=None)
+        self.last_used = time.time()
+
+    @property
+    def usable(self):
+        return not (self._c.closed or self._c.broken) and time.time() - self.last_used < _PG_IDLE_REUSE
 
     def execute(self, sql, params=()):
         m = _UPSERT.match(sql)
@@ -228,18 +235,48 @@ class _PgConn:
         lastrowid = cur.fetchone()[0] if returning else None
         return _PgCursor(cur, lastrowid)
 
+    def executemany(self, sql, seq):
+        """여러 행을 한 번에 실행한다(psycopg가 파이프라인으로 묶어 왕복을 줄인다)."""
+        cur = self._c.cursor()
+        cur.executemany(sql.replace("?", "%s"), [tuple(p) for p in seq])
+        return _PgCursor(cur)
+
     def commit(self):
         self._c.commit()
 
     def close(self):
-        self._c.close()
+        """요청이 끝날 때: 연결은 끊지 않고 진행 중인 트랜잭션만 정리해 다음 요청에 다시 쓴다."""
+        try:
+            self._c.rollback()
+            self.last_used = time.time()
+        except Exception:  # noqa: BLE001 - 끊긴 연결이면 버린다
+            self.discard()
+
+    def discard(self):
+        try:
+            self._c.close()
+        except Exception:  # noqa: BLE001
+            pass
+        if getattr(_pg_local, "conn", None) is self:
+            _pg_local.conn = None
+
+
+# 클라우드 DB는 새로 접속할 때마다 암호화·인증 왕복이 여러 번 필요해 1초 가까이 걸린다.
+# 그래서 서버의 스레드마다 연결을 하나 두고 요청 사이에 다시 쓴다. 오래 쉬었으면 새로 접속한다.
+_pg_local = threading.local()
+_PG_IDLE_REUSE = 60  # 초
 
 
 # ================================================================ 연결·초기화
 
 def connect():
     if BACKEND == "postgres":
-        return _PgConn(PG_URL)
+        c = getattr(_pg_local, "conn", None)
+        if c is None or not c.usable:
+            if c is not None:
+                c.discard()
+            c = _pg_local.conn = _PgConn(PG_URL)
+        return c
     if BACKEND == "unconfigured":
         raise NotConfigured()
     conn = sqlite3.connect(DB_PATH, timeout=10)
