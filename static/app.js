@@ -70,12 +70,13 @@ const state = {
     period: savedView.period || 'today',
     scope: savedView.scope || 'mine',
     filter: savedView.filter || '',
+    deptMode: savedView.deptMode === 'staff' ? 'staff' : 'all',  // 부서 전체: all=모아보기(기본), staff=담당자별
     anchor: today(),
   },
 };
 function saveView() {
-  const { period, scope, filter } = state.view;
-  store('deadline.view', JSON.stringify({ period, scope, filter }));
+  const { period, scope, filter, deptMode } = state.view;
+  store('deadline.view', JSON.stringify({ period, scope, filter, deptMode }));
 }
 const meName = () => (state.staff.find(s => s.id === state.me) || {}).name || '';
 const activeStaff = () => state.staff.filter(s => s.active);
@@ -235,6 +236,10 @@ async function renderList() {
         <button data-v="mine" class="${!dept ? 'on' : ''}">내 업무</button>
         <button data-v="dept" class="${dept ? 'on' : ''}">부서 전체</button>
       </div>
+      ${dept && v.period !== 'month' ? `<div class="seg" id="deptModeSeg" title="부서 전체를 보는 방식">
+        <button data-v="all" class="${v.deptMode === 'all' ? 'on' : ''}">모아보기</button>
+        <button data-v="staff" class="${v.deptMode === 'staff' ? 'on' : ''}">담당자별</button>
+      </div>` : ''}
       ${dept ? `<select id="staffFilter"><option value="">담당자 전체</option>${filterStaff.map(([id, n]) =>
         `<option value="${id}" ${String(id) === String(v.filter) ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>` : ''}
       ${v.period !== 'today' ? `<div class="row">
@@ -248,6 +253,7 @@ async function renderList() {
 
   $$('#periodSeg button').forEach(b => b.onclick = () => { v.period = b.dataset.v; v.anchor = today(); saveView(); renderList(); });
   $$('#scopeSeg button').forEach(b => b.onclick = () => { v.scope = b.dataset.v; saveView(); renderList(); });
+  $$('#deptModeSeg button').forEach(b => b.onclick = () => { v.deptMode = b.dataset.v; saveView(); renderList(); });
   const sf = $('#staffFilter'); if (sf) sf.onchange = () => { v.filter = sf.value; saveView(); renderList(); };
   const shift = n => { v.anchor = v.period === 'week' ? addDays(v.anchor, 7 * n) : (() => { const d = parseYmd(v.anchor); d.setDate(1); d.setMonth(d.getMonth() + n); return ymd(d); })(); renderList(); };
   if ($('#prevBtn')) { $('#prevBtn').onclick = () => shift(-1); $('#nextBtn').onclick = () => shift(1); $('#todayBtn').onclick = () => { v.anchor = today(); renderList(); }; }
@@ -256,11 +262,13 @@ async function renderList() {
   const tasks = visibleTasks();
   const items = buildItems(tasks);
   const body = $('#listBody');
+  // 부서 전체: 모아보기는 한 목록에 담당자 이름을 붙여서, 담당자별은 담당자마다 묶어서 보여 준다.
+  const byStaff = dept && v.deptMode === 'staff';
   if (v.period === 'today') {
-    body.innerHTML = dept ? todayDept(tasks) : todaySections(tasks);
+    body.innerHTML = byStaff ? todayDept(tasks) : todaySections(tasks, dept);
     $$('.more-done', body).forEach(b => b.onclick = () => { v.showAllDone = true; renderList(); });
   }
-  else if (v.period === 'week') body.innerHTML = dept && !v.filter ? weekDept(items) : weekGrid(items, dept);
+  else if (v.period === 'week') body.innerHTML = byStaff && !v.filter ? weekDept(items) : weekGrid(items, dept);
   else body.innerHTML = monthGrid(items, dept);
 }
 
@@ -295,12 +303,12 @@ function todayBuckets(tasks) {
 }
 // 완료 칸: 최근 30일 안에 완료한 업무를 보여 주고, 그 이전 것은 [더 보기]로 펼친다.
 const DONE_RECENT_DAYS = 30;
-function doneListHtml(arr) {
+function doneListHtml(arr, showOwner = false) {
   if (!arr.length) return '';
   const cutoff = addDays(today(), -DONE_RECENT_DAYS);
   const recent = state.view.showAllDone ? arr : arr.filter(e => (e.sortDate || '').slice(0, 10) >= cutoff);
   const hidden = arr.length - recent.length;
-  return recent.map(e => taskBlockHtml(e, false)).join('') +
+  return recent.map(e => taskBlockHtml(e, showOwner)).join('') +
     (hidden ? `<button class="btn sm more-done">이전 완료 업무 ${hidden}건 더 보기</button>` : '');
 }
 function stepNotesHtml(t) {
@@ -315,15 +323,15 @@ function stepNotesHtml(t) {
 function taskBlockHtml(entry, showOwner) {
   return `<div class="task-block">${itemHtml(entry.item, showOwner)}${stepNotesHtml(entry.task)}</div>`;
 }
-function todaySections(tasks) {
+function todaySections(tasks, showOwner = false) {
   const b = todayBuckets(tasks);
   const sec = (title, arr, emptyMsg) => `
     <div class="section-title">${title} <span class="count">${arr.length}건</span></div>
-    ${arr.length ? arr.map(e => taskBlockHtml(e, false)).join('') : (emptyMsg ? `<div class="empty">${emptyMsg}</div>` : '')}`;
+    ${arr.length ? arr.map(e => taskBlockHtml(e, showOwner)).join('') : (emptyMsg ? `<div class="empty">${emptyMsg}</div>` : '')}`;
   return sec('기한 지남 (미완료)', b.overdue, '') + sec('오늘 마감', b.today, '오늘 마감인 항목이 없습니다.') +
     sec('3일 이내 마감', b.soon, '') + (b.nodate.length ? sec('기한 미정', b.nodate, '') : '') +
     (!b.overdue.length && !b.today.length && !b.soon.length && !b.nodate.length ? '<p class="muted small">주간·월간 보기에서 이후 일정을 확인할 수 있습니다.</p>' : '') +
-    (b.done.length ? `<div class="section-title done-title">완료 <span class="count">${b.done.length}건 · 최근 완료 순</span></div>${doneListHtml(b.done)}` : '');
+    (b.done.length ? `<div class="section-title done-title">완료 <span class="count">${b.done.length}건 · 최근 완료 순</span></div>${doneListHtml(b.done, showOwner)}` : '');
 }
 function groupByStaff(items) {
   const m = new Map();
