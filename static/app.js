@@ -44,6 +44,10 @@ async function api(method, url, body) {
   const r = await fetch(url, opt);
   let data = null;
   try { data = await r.json(); } catch (e) { /* 본문 없음 */ }
+  if (r.status === 413 && !(data && data.error)) {
+    // 클라우드(Vercel)는 요청 1건을 약 4.5MB로 제한한다.
+    throw new Error('한 번에 올리는 파일이 너무 큽니다. 클라우드 서버는 약 4MB까지만 받으니, 본문 파일을 나눠서 올려 주세요.');
+  }
   if (!r.ok) throw new Error((data && data.error) || `요청 실패 (${r.status})`);
   return data;
 }
@@ -64,6 +68,7 @@ const savedView = (() => { try { return JSON.parse(store('deadline.view') || '{}
 const state = {
   me: Number(store('deadline.me')) || null,
   staff: [],
+  info: { storage: 'sqlite', can_backup: true },  // /api/info 로 덮어씀
   templates: [],
   tasks: [],
   view: {
@@ -883,7 +888,9 @@ async function renderSettings() {
         <div class="panel danger-zone">
           <h2>데이터 초기화</h2>
           <p class="muted small">등록된 업무를 한꺼번에 삭제합니다. 부서 <b>전원</b>의 업무가 지워지며 되돌릴 수 없습니다.
-            실행 직전 DB를 <code>backup\\before_reset_날짜.db</code>로 자동 백업하므로, 잘못 지웠다면 관리자가 그 파일로 복원할 수 있습니다.</p>
+            ${state.info.can_backup
+              ? '실행 직전 DB를 <code>backup\\before_reset_날짜.db</code>로 자동 백업하므로, 잘못 지웠다면 관리자가 그 파일로 복원할 수 있습니다.'
+              : '<b>클라우드 서버에서는 자동 백업 파일이 만들어지지 않습니다.</b> 필요하면 DB 서비스(Neon 등)의 복원 기능을 쓰세요.'}</p>
           <p>현재 업무 <b>${stats.tasks}</b>건 (가져오기 ${stats.imported} · 직접 등록 ${stats.direct}) · 단계 ${stats.steps}개 · 담당자 ${stats.staff}명</p>
           <div class="reset-opts">
             <label><input type="radio" name="rs_scope" value="imported" checked> 접수문서 가져오기로 등록한 업무만 삭제 (${stats.imported}건)</label>
@@ -906,7 +913,7 @@ async function renderSettings() {
     const r = await api('POST', '/api/admin/reset', {
       confirm: rsConfirm.value, scope, staff: $('#rs_staff').checked, mapping: $('#rs_mapping').checked,
     });
-    toast(`업무 ${r.deleted}건 삭제${r.staff_deleted ? `, 담당자 ${r.staff_deleted}명 삭제` : ''}. 백업: ${r.backup}`);
+    toast(`업무 ${r.deleted}건 삭제${r.staff_deleted ? `, 담당자 ${r.staff_deleted}명 삭제` : ''}. ${r.backup ? `백업: ${r.backup}` : '(파일 백업 없음)'}`);
     await loadStaff();  // 선택한 담당자가 지워졌으면 다시 고르는 창이 뜬다
     if (state.me) renderSettings();
   });
@@ -971,7 +978,20 @@ function drawTemplates() {
 }
 
 // ============================================================ 시작
+function renderStorageBanner() {
+  const s = state.info.storage;
+  if (s === 'sqlite') return;  // 내부망 서버
+  const bar = document.createElement('div');
+  bar.className = 'cloud-banner' + (s === 'sqlite-temp' ? ' warn' : '');
+  bar.textContent = s === 'sqlite-temp'
+    ? '⚠ 클라우드 DB가 연결되지 않아 데이터가 임시로만 저장됩니다(언제든 사라질 수 있음). Vercel 프로젝트의 Storage에서 Postgres(Neon)를 연결하세요.'
+    : '시연용 서버입니다. 가상 샘플만 사용하고, 실제 업무 문서(비공개 문서 포함)는 올리지 마세요.';
+  document.body.insertBefore(bar, $('#app'));
+}
+
 (async function start() {
+  await run(async () => { state.info = await api('GET', '/api/info'); });
+  renderStorageBanner();
   await run(loadStaff);
   render();
 })();

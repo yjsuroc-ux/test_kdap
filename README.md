@@ -43,6 +43,26 @@ python -m pip install --no-index --find-links wheels -r requirements.txt
 
 화면은 외부 CDN을 쓰지 않으므로 추가로 받을 것은 없습니다.
 
+(`requirements.txt`의 `psycopg`는 클라우드 배포용입니다. 내부망 서버에서는 설치되지 않아도 동작합니다.)
+
+## 2-1. Vercel 시연 배포 (가상 샘플 전용)
+
+> ⚠ **시연·시험용입니다.** Vercel은 인터넷 공개 서비스이고 이 도구에는 로그인이 없어, 주소를 아는 누구나 조회·수정·초기화할 수 있습니다. **실제 온나라 문서(비공개 문서 포함)는 올리지 마세요.** 실사용은 내부망 서버(`run.bat`)로 합니다. 배포 화면 위쪽에도 이 안내가 표시됩니다.
+
+1. [vercel.com](https://vercel.com)에 GitHub 계정으로 로그인 → **Add New → Project** → 이 저장소 선택 → **Deploy**
+   - 설정은 `vercel.json`에 들어 있어 따로 바꿀 것이 없습니다(모든 요청을 `api/index.py` → Flask 앱으로 전달).
+2. 프로젝트 **Storage** 탭 → **Neon (Postgres)** 생성 후 이 프로젝트에 연결 → `DATABASE_URL` 환경변수가 자동으로 들어갑니다.
+3. **Deployments → 최근 배포 → Redeploy** (환경변수는 다시 배포해야 적용)
+4. 이후 `main` 브랜치에 푸시하면 자동으로 다시 배포됩니다.
+
+| 항목 | 내부망 서버 | Vercel |
+|---|---|---|
+| DB | SQLite 파일(`data\tasks.db`) | `DATABASE_URL`의 PostgreSQL. 표가 없으면 첫 요청 때 자동 생성 |
+| DB 미연결 시 | — | 임시 저장소(`/tmp`)로 동작하며 화면에 빨간 경고. 데이터가 언제든 사라짐 |
+| 초기화 전 자동 백업 | `backup\` 폴더에 파일 | 없음(Neon의 복원 기능 사용) |
+| 한 번에 올릴 수 있는 파일 | 300MB | 약 4.5MB(Vercel 제한). 넘으면 나눠서 올리라는 안내 |
+| 시간 | 서버 PC 시간 | 한국 시간(KST)으로 고정 |
+
 ## 3. 백업
 
 `backup.bat`을 실행하면 `backup\tasks_날짜_시각.db`로 DB를 복사합니다(30일 지난 백업은 자동 삭제). 서버가 켜져 있어도 안전합니다.
@@ -128,7 +148,8 @@ schtasks /create /tn "문서기한관리 백업" /tr "\"C:\경로\backup.bat\"" 
 | `app.py` | 서버(Flask + waitress), API |
 | `rules.py` / `rules_config.json` | 문서번호·유형·기한 식별 규칙 / 키워드 |
 | `parsers.py` | 엑셀·HWP·HWPX 읽기 |
-| `db.py` | SQLite 스키마 (`data\tasks.db`) |
+| `db.py` | 저장소: SQLite(`data\tasks.db`), `DATABASE_URL`이 있으면 PostgreSQL |
+| `api\index.py`, `vercel.json`, `.vercelignore` | Vercel 배포 설정 |
 | `static\` | 화면(HTML/JS/CSS) |
 | `run.bat`, `backup.bat` | 실행, 백업 |
 

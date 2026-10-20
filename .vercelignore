@@ -1,0 +1,10 @@
+# 배포에 필요 없는 파일 (서버 실행 데이터, 샘플, 내부망용 스크립트)
+data/
+backup/
+temp/
+samples/
+samples_test/
+tools/
+wheels/
+*.bat
+*.db

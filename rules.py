@@ -149,7 +149,7 @@ def parse_dates(sentence, ref):
 
 
 def find_deadline(sentences, received, cfg):
-    ref = received or dt.date.today()
+    ref = received or dt.datetime.now(dt.timezone(dt.timedelta(hours=9))).date()  # 한국 날짜
     ctx_kw = [compact(k) for k in cfg.get("deadline_context_keywords", [])]
     ctx, suffixed = [], []
     for s in sentences:

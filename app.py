@@ -59,6 +59,28 @@ def _close(exc):
         c.close()
 
 
+# 클라우드(Vercel)에서는 main()이 실행되지 않으므로, 서버마다 첫 요청 때 DB를 한 번 준비한다.
+_init_lock = threading.Lock()
+_init_done = False
+
+
+@app.before_request
+def _ensure_db():
+    global _init_done
+    if _init_done:
+        return
+    with _init_lock:
+        if not _init_done:
+            db.init()
+            _init_done = True
+
+
+@app.get("/api/info")
+def info():
+    """저장소 종류. sqlite-temp(클라우드인데 DB 미연결)이면 화면에 경고를 띄운다."""
+    return jsonify(storage=db.BACKEND, can_backup=db.CAN_BACKUP)
+
+
 def body():
     return request.get_json(silent=True) or {}
 
@@ -485,28 +507,34 @@ def step_apply_template(tid):
 
 # ================================================================ 접수문서 가져오기
 
-IMPORTS = {}
-IMPORT_LOCK = threading.Lock()
+# 업로드 → 미리보기 → 등록 사이의 상태는 DB(import_session)에 둔다.
+# 서버 메모리에 두면 클라우드(요청마다 다른 서버)나 여러 프로세스에서 "세션 만료"가 난다.
 IMPORT_TTL = 3 * 3600
 
 
 def _store_import(data):
-    with IMPORT_LOCK:
-        cutoff = time.time() - IMPORT_TTL
-        for k in [k for k, v in IMPORTS.items() if v["created"] < cutoff]:
-            del IMPORTS[k]
-        iid = uuid.uuid4().hex
-        data["created"] = time.time()
-        IMPORTS[iid] = data
-        return iid
+    c = conn()
+    c.execute("DELETE FROM import_session WHERE created < ?", (time.time() - IMPORT_TTL,))
+    iid = uuid.uuid4().hex
+    c.execute("INSERT INTO import_session(id, created, data) VALUES (?,?,?)",
+              (iid, time.time(), json.dumps(data, ensure_ascii=False)))
+    c.commit()
+    return iid
 
 
 def _get_import(iid):
-    with IMPORT_LOCK:
-        imp = IMPORTS.get(iid)
-    if not imp:
+    row = conn().execute("SELECT data FROM import_session WHERE id=?", (iid,)).fetchone()
+    if not row:
         raise ApiError("가져오기 세션이 만료되었습니다. 파일을 다시 올려 주세요.", 404)
+    imp = json.loads(row["data"])
+    if "preview_rows" in imp:  # JSON으로 저장하면 숫자 키가 문자열이 되므로 되돌린다
+        imp["preview_rows"] = {int(k): v for k, v in imp["preview_rows"].items()}
     return imp
+
+
+def _save_import(iid, imp):
+    conn().execute("UPDATE import_session SET data=? WHERE id=?", (json.dumps(imp, ensure_ascii=False), iid))
+    conn().commit()
 
 
 def get_setting(key, default=None):
@@ -580,14 +608,13 @@ def admin_reset():
             "DELETE FROM staff WHERE id NOT IN (SELECT DISTINCT assignee_id FROM task)").rowcount
     if b.get("mapping"):
         c.execute("DELETE FROM settings WHERE key='excel_mapping'")
+    c.execute("DELETE FROM import_session")  # 진행 중이던 가져오기 미리보기도 무효화
     c.commit()
-    with IMPORT_LOCK:
-        IMPORTS.clear()  # 진행 중이던 가져오기 미리보기도 무효화
     app.logger.warning("데이터 초기화: %s님, 범위=%s, 업무 %d건 삭제, 백업=%s", me["name"], scope, deleted, path)
+    if path:
+        path = os.path.relpath(path, BASE) if path.startswith(BASE) else path
     return jsonify(deleted=deleted, steps_before=before["steps"], staff_deleted=staff_deleted,
-                   mapping_cleared=bool(b.get("mapping")),
-                   backup=os.path.relpath(path, BASE) if path.startswith(BASE) else path,
-                   stats=data_stats())
+                   mapping_cleared=bool(b.get("mapping")), backup=path, stats=data_stats())
 
 
 @app.post("/api/import/parse")
@@ -771,6 +798,7 @@ def import_preview(iid):
         f = imp["files"][r["file_index"]] if r["file_index"] is not None else None
         out_rows.append(_preview_row(r, f, cfg))
     imp["preview_rows"] = {r["idx"]: r for r in rows}
+    _save_import(iid, imp)
     return jsonify(rows=out_rows, unmatched=unmatched, skipped_dup=len(dup_rows), skipped_list=dup_rows[:50])
 
 
@@ -801,7 +829,9 @@ def import_pair(iid):
     r["file_index"] = fi
     f = imp["files"][fi]
     f["match_note"] = "사용자가 직접 짝지음"
-    return jsonify(_preview_row(r, f, rules.load_config()))
+    out = _preview_row(r, f, rules.load_config())
+    _save_import(iid, imp)
+    return jsonify(out)
 
 
 @app.post("/api/import/<iid>/commit")
@@ -874,7 +904,9 @@ def _local_ips():
 
 
 def main():
+    global _init_done
     db.init()
+    _init_done = True
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "8000"))
     print("=" * 60)

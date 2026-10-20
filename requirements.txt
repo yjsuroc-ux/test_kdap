@@ -3,3 +3,5 @@ openpyxl>=3.1
 olefile>=0.46
 waitress>=2.1
 xlrd>=2.0
+# 클라우드(Vercel 등)에서 PostgreSQL을 쓸 때만 필요. 내부망 서버(SQLite)는 없어도 동작한다.
+psycopg[binary]>=3.1
