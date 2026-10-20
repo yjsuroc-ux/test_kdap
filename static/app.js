@@ -281,10 +281,11 @@ function todayBuckets(tasks) {
 function stepNotesHtml(t) {
   if (!t.steps.length) return '';
   const tdone = t.status === '완료';
-  return `<div class="step-notes">${t.steps.map(s => {
+  const title = t.steps.map(s => `${s.deadline ? fmtDate(s.deadline) : '기한 미정'} ${s.name}${s.done ? ' (완료)' : ''}`).join(' · ');
+  return `<a class="step-notes" href="#/task/${t.id}" title="${esc(title)}">${t.steps.map(s => {
     const it = { kind: 'step', date: s.deadline, done: tdone || s.done };
-    return `<a class="step-note ${statusOf(it)}" href="#/task/${t.id}"><span class="sn-date">${s.deadline ? fmtDate(s.deadline) : '기한 미정'}</span><span class="sn-name">${esc(s.name)}</span></a>`;
-  }).join('')}</div>`;
+    return `<span class="step-note ${statusOf(it)}"><span class="sn-date">${s.deadline ? fmtDate(s.deadline) : '기한 미정'}</span> ${esc(s.name)}</span>`;
+  }).join('<span class="sn-sep">·</span>')}</a>`;
 }
 function taskBlockHtml(entry, showOwner) {
   return `<div class="task-block">${itemHtml(entry.item, showOwner)}${stepNotesHtml(entry.task)}</div>`;
