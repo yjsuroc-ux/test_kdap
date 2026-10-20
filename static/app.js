@@ -101,6 +101,19 @@ function setMe(id) {
   renderMeSelect();
 }
 
+// 사용자를 고르면(처음 접속·다른 사람으로 바꾸기) 그 사람의 "내 업무" 목록부터 보여 준다.
+function chooseMe(id) {
+  setMe(id);
+  closeModal();
+  const v = state.view;
+  v.scope = 'mine';
+  v.filter = '';
+  v.anchor = today();
+  saveView();
+  if (location.hash && location.hash !== '#/') location.hash = '#/';  // hashchange가 다시 그린다
+  else render();
+}
+
 function renderMeSelect() {
   const sel = $('#meSelect');
   const list = activeStaff();
@@ -113,7 +126,7 @@ function renderMeSelect() {
 $('#meSelect').addEventListener('change', e => {
   const v = e.target.value;
   if (v === '__pick') { renderMeSelect(); pickStaffModal(); return; }
-  if (v) { setMe(Number(v)); render(); }
+  if (v) chooseMe(Number(v));
 });
 
 function pickStaffModal() {
@@ -129,13 +142,13 @@ function pickStaffModal() {
     </div>
     ${state.me ? '<div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" id="pickCancel">닫기</button></div>' : ''}
   `, box => {
-    $$('.staff-pick button', box).forEach(b => b.onclick = () => { setMe(Number(b.dataset.id)); closeModal(); render(); });
+    $$('.staff-pick button', box).forEach(b => b.onclick = () => chooseMe(Number(b.dataset.id)));
     const add = () => run(async () => {
       const name = $('#newStaffName', box).value.trim();
       if (!name) return;
       const r = await api('POST', '/api/staff', { name });
       await loadStaff();
-      setMe(r.id); closeModal(); render();
+      chooseMe(r.id);
     });
     $('#addStaffBtn', box).onclick = add;
     $('#newStaffName', box).onkeydown = e => { if (e.key === 'Enter') add(); };
