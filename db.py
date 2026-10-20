@@ -12,7 +12,22 @@ import re
 import sqlite3
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-PG_URL = os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_URL") or ""
+
+
+def clean_pg_url(url):
+    """PostgreSQL 드라이버(libpq)가 모르는 주소 뒤 옵션을 뺀다.
+    예: Vercel의 Supabase 연동이 넣는 `supa=base-pooler.x`, Prisma용 `pgbouncer=true`."""
+    if not url or "?" not in url:
+        return url
+    from urllib.parse import parse_qsl, urlencode
+
+    base, query = url.split("?", 1)
+    kept = [(k, v) for k, v in parse_qsl(query, keep_blank_values=True) if k not in ("supa", "pgbouncer")]
+    return base + ("?" + urlencode(kept) if kept else "")
+
+
+# Supabase는 반드시 "pooler" 주소(…pooler.supabase.com)를 쓴다. 직접 주소(db.….supabase.co)는 IPv6 전용이라 Vercel에서 접속되지 않는다.
+PG_URL = clean_pg_url(os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_URL") or "")
 ON_VERCEL = bool(os.environ.get("VERCEL"))
 
 if PG_URL:
@@ -173,7 +188,9 @@ class _PgConn:
     def __init__(self, url):
         import psycopg
 
-        self._c = psycopg.connect(url, connect_timeout=10)
+        # prepare_threshold=None: 서버 측 prepared statement를 쓰지 않는다.
+        # Supabase 트랜잭션 풀러(6543)·PgBouncer는 이를 지원하지 않아, 같은 쿼리를 여러 번 돌리면 오류가 난다.
+        self._c = psycopg.connect(url, connect_timeout=10, prepare_threshold=None)
 
     def execute(self, sql, params=()):
         m = _UPSERT.match(sql)
@@ -252,6 +269,10 @@ def _init_pg():
                 conn.execute(stmt)
         conn.execute("CREATE INDEX IF NOT EXISTS ix_task_docno ON task(doc_no_norm)")
         conn.execute("CREATE INDEX IF NOT EXISTS ix_task_receipt ON task(receipt_no_norm)")
+        # 행 수준 보안(RLS) 켜기: Supabase는 표를 자동 REST API로도 내보내는데, RLS를 켜고 정책을 두지 않으면
+        # 그 API로는 읽기·쓰기가 막힌다. 이 앱은 표 소유자로 접속하므로 영향이 없다. 다른 PostgreSQL에서도 무해하다.
+        for table in ("staff", "task", "step", "template", "template_step", "settings", "import_session"):
+            conn.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
         # 여러 서버가 동시에 처음 뜰 때 기본 템플릿이 두 번 들어가지 않도록, 'seeded' 표시를 먼저 차지한 쪽만 넣는다.
         first = conn.execute(
             "INSERT INTO settings(key, value) VALUES ('seeded', '1') ON CONFLICT (key) DO NOTHING RETURNING key"

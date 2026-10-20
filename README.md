@@ -51,9 +51,18 @@ python -m pip install --no-index --find-links wheels -r requirements.txt
 
 1. [vercel.com](https://vercel.com)에 GitHub 계정으로 로그인 → **Add New → Project** → 이 저장소 선택 → **Deploy**
    - 설정은 `vercel.json`에 들어 있어 따로 바꿀 것이 없습니다(모든 요청을 `api/index.py` → Flask 앱으로 전달).
-2. 프로젝트 **Storage** 탭 → **Neon (Postgres)** 생성 후 이 프로젝트에 연결 → `DATABASE_URL` 환경변수가 자동으로 들어갑니다.
+2. DB 연결 — 아래 중 하나 (둘 다 PostgreSQL이며 표는 첫 요청 때 자동 생성)
+   - **Supabase (권장)**
+     - **방법 A — Vercel 연동:** 프로젝트 **Storage** 탭 → **Supabase** → 새로 만들거나 기존 프로젝트 연결 → `POSTGRES_URL`이 자동으로 들어갑니다(주소 뒤의 `supa=…` 옵션은 앱이 알아서 뺍니다).
+     - **방법 B — 직접 연결:** [supabase.com](https://supabase.com)에서 프로젝트 생성(지역: Seoul `ap-northeast-2` 권장) → 상단 **Connect** → **Transaction pooler** 주소 복사(`postgresql://postgres.<프로젝트ID>:[비밀번호]@aws-0-ap-northeast-2.pooler.supabase.com:6543/postgres`) → `[비밀번호]`를 프로젝트 DB 비밀번호로 바꿔 Vercel **Settings → Environment Variables**에 `DATABASE_URL`로 저장
+     - ⚠ **Direct connection 주소(`db.<프로젝트ID>.supabase.co:5432`)는 쓰지 마세요.** IPv6 전용이라 Vercel에서 접속되지 않습니다.
+     - 앱이 만든 표에는 RLS(행 수준 보안)를 켜 두므로 Supabase 자동 REST API로는 읽히지 않습니다(앱은 표 소유자로 접속해 영향 없음).
+   - **Neon:** 프로젝트 **Storage** 탭 → **Neon** → 연결하면 `DATABASE_URL`이 자동으로 들어갑니다.
 3. **Deployments → 최근 배포 → Redeploy** (환경변수는 다시 배포해야 적용)
 4. 이후 `main` 브랜치에 푸시하면 자동으로 다시 배포됩니다.
+5. 주소가 틀리면 화면에 "DB에 연결할 수 없습니다…" 안내가 뜹니다. 연결이 안 되어 있으면 빨간 "임시 저장소" 경고가 뜹니다.
+
+> DB 비밀번호가 들어간 주소는 Vercel 환경변수에만 넣고, 코드·채팅·문서에는 적지 마세요.
 
 | 항목 | 내부망 서버 | Vercel |
 |---|---|---|

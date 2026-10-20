@@ -41,6 +41,29 @@ def _api_error(e):
     return jsonify(error=e.msg), e.status
 
 
+@app.errorhandler(Exception)
+def _unexpected(e):
+    from werkzeug.exceptions import HTTPException
+
+    if isinstance(e, HTTPException):
+        return e
+    app.logger.exception("처리 중 오류")
+    msg = DB_CONN_HELP if _is_db_conn_error(e) else "서버 오류가 발생했습니다."
+    return jsonify(error=msg), 500
+
+
+DB_CONN_HELP = ("DB에 연결할 수 없습니다. 연결 주소(DATABASE_URL 또는 POSTGRES_URL)를 확인하세요. "
+                "Supabase는 Connect 화면의 'Transaction pooler' 주소(…pooler.supabase.com:6543)를 써야 합니다.")
+
+
+def _is_db_conn_error(e):
+    if db.BACKEND != "postgres":
+        return False
+    import psycopg
+
+    return isinstance(e, psycopg.OperationalError)  # 접속 시간 초과·인증 실패 등 포함
+
+
 @app.errorhandler(413)
 def _too_large(e):
     return jsonify(error="파일이 너무 큽니다(최대 300MB)."), 413
@@ -67,8 +90,8 @@ _init_done = False
 @app.before_request
 def _ensure_db():
     global _init_done
-    if _init_done:
-        return
+    if _init_done or not request.path.startswith("/api/"):
+        return  # 화면 파일은 DB 없이도 내려준다(DB 오류는 화면에서 안내)
     with _init_lock:
         if not _init_done:
             db.init()
@@ -905,7 +928,12 @@ def _local_ips():
 
 def main():
     global _init_done
-    db.init()
+    try:
+        db.init()
+    except Exception as e:  # noqa: BLE001
+        if _is_db_conn_error(e):
+            raise SystemExit(f"{DB_CONN_HELP}\n({e})")
+        raise
     _init_done = True
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "8000"))
