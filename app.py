@@ -87,11 +87,21 @@ _init_lock = threading.Lock()
 _init_done = False
 
 
+NOT_CONFIGURED_HELP = ("Supabase(DB)가 연결되지 않아 저장할 수 없습니다. Vercel 프로젝트의 "
+                       "Settings → Environment Variables에 DATABASE_URL(Supabase Transaction pooler 주소)을 "
+                       "Production으로 추가한 뒤 다시 배포하세요.")
+
+
 @app.before_request
 def _ensure_db():
     global _init_done
-    if _init_done or not request.path.startswith("/api/"):
-        return  # 화면 파일은 DB 없이도 내려준다(DB 오류는 화면에서 안내)
+    if not request.path.startswith("/api/") or request.path == "/api/info":
+        return  # 화면 파일과 상태 확인은 DB 없이도 응답한다(DB 문제는 화면에서 안내)
+    if db.BACKEND == "unconfigured":
+        # 임시 저장소로 대신 저장하지 않는다. 모든 데이터는 Supabase에만 저장한다.
+        return jsonify(error=NOT_CONFIGURED_HELP, setup_required=True), 503
+    if _init_done:
+        return
     with _init_lock:
         if not _init_done:
             db.init()
@@ -100,10 +110,19 @@ def _ensure_db():
 
 @app.get("/api/info")
 def info():
-    """저장소 종류. sqlite-temp(클라우드인데 DB 미연결)이면 화면에 경고를 띄운다."""
+    """저장소 종류: postgres(Supabase 등) / sqlite(내부망 서버) / unconfigured(클라우드인데 DB 미연결)."""
     # db_env: 실제로 쓰는 DB 주소 변수 이름, env_names: DB 관련 변수 이름 목록(값은 내보내지 않음)
-    return jsonify(storage=db.BACKEND, can_backup=db.CAN_BACKUP, db_env=db.PG_ENV,
-                   env_names=db.db_env_names() if db.ON_VERCEL else [])
+    out = dict(storage=db.BACKEND, can_backup=db.CAN_BACKUP, db_env=db.PG_ENV,
+               env_names=db.db_env_names() if db.ON_VERCEL else [])
+    if db.BACKEND == "postgres":  # 실제로 접속되는지도 확인한다
+        try:
+            c = conn()
+            c.execute("SELECT 1").fetchone()
+            out.update(db_ok=True, supabase="supabase.com" in db.PG_URL)
+        except Exception as e:  # noqa: BLE001
+            app.logger.warning("DB 접속 확인 실패: %s", e)
+            out.update(db_ok=False, error=DB_CONN_HELP)
+    return jsonify(out)
 
 
 def body():

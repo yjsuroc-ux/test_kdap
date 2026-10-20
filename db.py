@@ -49,15 +49,18 @@ PG_URL = clean_pg_url(_pg_raw)
 ON_VERCEL = bool(os.environ.get("VERCEL"))
 
 if PG_URL:
-    BACKEND = "postgres"
+    BACKEND = "postgres"      # Supabase 등 PostgreSQL에 저장
 elif ON_VERCEL:
-    BACKEND = "sqlite-temp"  # 클라우드인데 DB 연결이 없음: /tmp는 언제든 지워진다
+    BACKEND = "unconfigured"  # 클라우드인데 DB 주소가 없음: 임시 저장하지 않고 연결 안내만 보여 준다
 else:
-    BACKEND = "sqlite"
+    BACKEND = "sqlite"        # 내부망 서버: data/tasks.db 파일
 
-_default_data = "/tmp/deadline-data" if BACKEND == "sqlite-temp" else os.path.join(BASE, "data")
-DATA_DIR = os.environ.get("DEADLINE_DATA_DIR", _default_data)
+DATA_DIR = os.environ.get("DEADLINE_DATA_DIR", os.path.join(BASE, "data"))
 DB_PATH = os.path.join(DATA_DIR, "tasks.db")
+
+
+class NotConfigured(Exception):
+    """클라우드에서 DB(Supabase) 연결 정보가 없을 때."""
 
 # 한국 시간 고정(클라우드 서버는 UTC로 돌아간다). 한국은 일광절약시간이 없다.
 KST = dt.timezone(dt.timedelta(hours=9), "KST")
@@ -237,6 +240,8 @@ class _PgConn:
 def connect():
     if BACKEND == "postgres":
         return _PgConn(PG_URL)
+    if BACKEND == "unconfigured":
+        raise NotConfigured()
     conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
@@ -256,6 +261,8 @@ def _seed(conn):
 def init():
     if BACKEND == "postgres":
         return _init_pg()
+    if BACKEND == "unconfigured":
+        raise NotConfigured()
     os.makedirs(DATA_DIR, exist_ok=True)
     conn = connect()
     try:

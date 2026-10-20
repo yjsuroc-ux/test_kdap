@@ -60,14 +60,28 @@ python -m pip install --no-index --find-links wheels -r requirements.txt
    - **Neon:** 프로젝트 **Storage** 탭 → **Neon** → 연결하면 `DATABASE_URL`이 자동으로 들어갑니다.
 3. **Deployments → 최근 배포 → Redeploy** (환경변수는 다시 배포해야 적용)
 4. 이후 `main` 브랜치에 푸시하면 자동으로 다시 배포됩니다.
-5. 주소가 틀리면 화면에 "DB에 연결할 수 없습니다…" 안내가 뜹니다. 연결이 안 되어 있으면 빨간 "임시 저장소" 경고가 뜹니다.
+5. 연결이 안 되어 있으면 앱 대신 **"Supabase 연결이 필요합니다"** 안내 화면이 뜨고 아무것도 저장되지 않습니다(임시 저장 없음). 주소·비밀번호가 틀리면 "Supabase에 접속할 수 없습니다" 화면이 뜹니다. 상태는 `/api/info`에서도 볼 수 있습니다(`"storage":"postgres","db_ok":true`면 정상).
+6. (선택) 표를 미리 만들거나 구조를 보려면 Supabase **SQL Editor**에 `supabase/schema.sql` 내용을 붙여 넣어 실행합니다. 앱이 첫 요청 때 같은 표를 자동으로 만들기 때문에 꼭 할 필요는 없고, 여러 번 실행해도 안전합니다. 저장된 데이터는 Supabase **Table Editor**에서 볼 수 있습니다.
+
+### Supabase에 저장되는 것
+
+| 데이터 | 표 |
+|---|---|
+| 담당자 명단(추가·이름 변경·비활성화) | `staff` |
+| 접수문서·직접 등록 업무, 유형·기한·담당자·메모, 완료 처리, 본문·식별 근거 | `task` |
+| 단계별 기한·완료 체크 | `step` |
+| 템플릿 | `template`, `template_step` |
+| 엑셀 열 매핑 등 설정 | `settings` |
+| 가져오기 중 미리보기 상태(3시간 뒤 자동 정리) | `import_session` |
+
+"나(담당자)" 선택과 보기 설정(오늘/주간, 내 업무/부서 전체 등)만 **각 PC의 브라우저**에 기억됩니다(PRD F2-1). 이 값을 서버에 두면 모든 PC가 같은 사람으로 바뀌기 때문입니다.
 
 > DB 비밀번호가 들어간 주소는 Vercel 환경변수에만 넣고, 코드·채팅·문서에는 적지 마세요.
 
 | 항목 | 내부망 서버 | Vercel |
 |---|---|---|
 | DB | SQLite 파일(`data\tasks.db`) | `DATABASE_URL`의 PostgreSQL. 표가 없으면 첫 요청 때 자동 생성 |
-| DB 미연결 시 | — | 임시 저장소(`/tmp`)로 동작하며 화면에 빨간 경고. 데이터가 언제든 사라짐 |
+| DB 미연결 시 | — | 저장하지 않고 연결 안내 화면만 표시 |
 | 초기화 전 자동 백업 | `backup\` 폴더에 파일 | 없음(Neon의 복원 기능 사용) |
 | 한 번에 올릴 수 있는 파일 | 300MB | 약 4.5MB(Vercel 제한). 넘으면 나눠서 올리라는 안내 |
 | 시간 | 서버 PC 시간 | 한국 시간(KST)으로 고정 |
@@ -159,6 +173,7 @@ schtasks /create /tn "문서기한관리 백업" /tr "\"C:\경로\backup.bat\"" 
 | `parsers.py` | 엑셀·HWP·HWPX 읽기 |
 | `db.py` | 저장소: SQLite(`data\tasks.db`), `DATABASE_URL`이 있으면 PostgreSQL |
 | `api\index.py`, `vercel.json`, `.vercelignore` | Vercel 배포 설정 |
+| `supabase\schema.sql` | Supabase 표 정의(`python tools\make_schema_sql.py`로 db.py에서 생성) |
 | `static\` | 화면(HTML/JS/CSS) |
 | `run.bat`, `backup.bat` | 실행, 백업 |
 

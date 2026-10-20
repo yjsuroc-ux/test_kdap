@@ -979,18 +979,42 @@ function drawTemplates() {
 
 // ============================================================ 시작
 function renderStorageBanner() {
-  const s = state.info.storage;
-  if (s === 'sqlite') return;  // 내부망 서버
+  const i = state.info;
+  if (i.storage === 'sqlite') return;  // 내부망 서버
   const bar = document.createElement('div');
-  bar.className = 'cloud-banner' + (s === 'sqlite-temp' ? ' warn' : '');
-  bar.textContent = s === 'sqlite-temp'
-    ? '⚠ 클라우드 DB가 연결되지 않아 데이터가 임시로만 저장됩니다(언제든 사라질 수 있음). Vercel 프로젝트의 Storage에서 Postgres(Neon)를 연결하세요.'
-    : '시연용 서버입니다. 가상 샘플만 사용하고, 실제 업무 문서(비공개 문서 포함)는 올리지 마세요.';
+  bar.className = 'cloud-banner';
+  bar.textContent = `${i.supabase ? 'Supabase' : '클라우드 DB'}에 저장 중 · 시연용 서버입니다. 가상 샘플만 사용하고, 실제 업무 문서(비공개 문서 포함)는 올리지 마세요.`;
   document.body.insertBefore(bar, $('#app'));
 }
 
+// 클라우드인데 Supabase가 연결되지 않았거나 접속이 안 되면, 앱 대신 연결 안내를 보여 준다(임시 저장하지 않음).
+function renderSetupRequired() {
+  const i = state.info;
+  const notSet = i.storage === 'unconfigured';
+  $('.nav').classList.add('hidden');
+  $('.me').classList.add('hidden');
+  app.innerHTML = `<div class="panel setup">
+    <h2>${notSet ? 'Supabase 연결이 필요합니다' : 'Supabase에 접속할 수 없습니다'}</h2>
+    <p>이 도구의 모든 데이터(담당자 명단, 접수문서·업무, 단계, 완료 처리, 템플릿, 설정)는 <b>Supabase</b>에 저장됩니다.
+      ${notSet ? '지금 이 배포에는 Supabase 연결 주소가 없어 사용할 수 없습니다.' : '연결 주소는 있지만 접속에 실패했습니다. 주소나 비밀번호를 확인하세요.'}</p>
+    <ol>
+      <li>Supabase 프로젝트 → 상단 <b>Connect</b> → <b>Transaction pooler</b> 주소 복사
+        <div class="muted small"><code>postgresql://postgres.&lt;프로젝트ID&gt;:[비밀번호]@aws-0-….pooler.supabase.com:6543/postgres</code> — <code>[비밀번호]</code>를 DB 비밀번호로 바꾸기.
+        <code>db.….supabase.co</code>(Direct connection) 주소는 Vercel에서 접속되지 않습니다.</div></li>
+      <li>Vercel → 이 프로젝트 → <b>Settings → Environment Variables</b> → Key <code>DATABASE_URL</code>, Value 위 주소, <b>Production</b> 체크 → Save</li>
+      <li><b>Deployments</b> → Production 배포의 <b>⋯ → Redeploy</b></li>
+      <li>이 화면을 새로고침</li>
+    </ol>
+    <p class="muted small">진단: 저장소 <code>${esc(i.storage)}</code> · 사용 중인 변수 <code>${esc(i.db_env || '없음')}</code> ·
+      DB 관련 환경변수 이름 <code>${esc((i.env_names || []).join(', ') || '없음')}</code></p>
+    <button class="btn primary" onclick="location.reload()">다시 확인</button>
+  </div>`;
+}
+
 (async function start() {
-  await run(async () => { state.info = await api('GET', '/api/info'); });
+  const ok = await run(async () => { state.info = await api('GET', '/api/info'); return true; });
+  if (!ok) return;
+  if (state.info.storage === 'unconfigured' || state.info.db_ok === false) { renderSetupRequired(); return; }
   renderStorageBanner();
   await run(loadStaff);
   render();
