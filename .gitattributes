@@ -1,0 +1,6 @@
+* text=auto
+# cmd는 LF 줄바꿈 배치 파일을 잘못 읽으므로 항상 CRLF로 내려받는다.
+*.bat text eol=crlf
+*.xlsx binary
+*.hwp binary
+*.hwpx binary

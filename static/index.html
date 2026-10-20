@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>문서 기한 관리</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="#/">문서 기한 관리</a>
+  <nav class="nav">
+    <a href="#/" data-nav="list">업무 목록</a>
+    <a href="#/import" data-nav="import">접수문서 가져오기</a>
+    <a href="#/settings" data-nav="settings">설정</a>
+  </nav>
+  <div class="me">
+    <label for="meSelect">나</label>
+    <select id="meSelect"></select>
+  </div>
+</header>
+<main id="app"></main>
+<div id="modal" class="modal hidden"><div class="modal-box" id="modalBox"></div></div>
+<div id="toast" class="toast hidden"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
