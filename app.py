@@ -101,7 +101,9 @@ def _ensure_db():
 @app.get("/api/info")
 def info():
     """저장소 종류. sqlite-temp(클라우드인데 DB 미연결)이면 화면에 경고를 띄운다."""
-    return jsonify(storage=db.BACKEND, can_backup=db.CAN_BACKUP)
+    # db_env: 실제로 쓰는 DB 주소 변수 이름, env_names: DB 관련 변수 이름 목록(값은 내보내지 않음)
+    return jsonify(storage=db.BACKEND, can_backup=db.CAN_BACKUP, db_env=db.PG_ENV,
+                   env_names=db.db_env_names() if db.ON_VERCEL else [])
 
 
 def body():

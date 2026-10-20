@@ -26,8 +26,26 @@ def clean_pg_url(url):
     return base + ("?" + urlencode(kept) if kept else "")
 
 
+def _find_pg_url():
+    """DB 주소 환경변수를 찾는다. → (변수 이름, 주소)
+    Vercel에서 Storage를 연결할 때 접두어를 붙이면 STORAGE_POSTGRES_URL처럼 이름이 바뀌므로 그것도 찾는다."""
+    for k in ("DATABASE_URL", "POSTGRES_URL"):
+        if os.environ.get(k):
+            return k, os.environ[k]
+    for k in sorted(os.environ):
+        if (k.endswith("_POSTGRES_URL") or k.endswith("_DATABASE_URL")) and os.environ[k]:
+            return k, os.environ[k]
+    return None, ""
+
+
+def db_env_names():
+    """진단용: DB 관련 환경변수의 '이름'만 돌려준다(값은 절대 내보내지 않음)."""
+    return sorted(k for k in os.environ if any(w in k for w in ("POSTGRES", "DATABASE", "SUPABASE")))
+
+
 # Supabase는 반드시 "pooler" 주소(…pooler.supabase.com)를 쓴다. 직접 주소(db.….supabase.co)는 IPv6 전용이라 Vercel에서 접속되지 않는다.
-PG_URL = clean_pg_url(os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_URL") or "")
+PG_ENV, _pg_raw = _find_pg_url()
+PG_URL = clean_pg_url(_pg_raw)
 ON_VERCEL = bool(os.environ.get("VERCEL"))
 
 if PG_URL:
